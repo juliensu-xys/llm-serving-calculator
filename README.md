@@ -1,6 +1,6 @@
 # llm-serving-calculator
 
-A single-page calculator that compares two GPU rigs for serving an LLM. You pick a GPU and a model for each rig from the presets, then enter the workload (prompt length, output length, number of users). It estimates:
+A single-page calculator that compares two GPU rigs for serving an LLM. You pick a GPU and a model for each rig from the presets, then choose a workload scenario (chat, coding agent, repo-scale review, agent swarm, RAG, reasoning, single developer, offline batch) or enter your own values. It estimates:
 
 - whether the model fits, and how many users the KV cache can hold
 - tokens/s per user and total tokens/s at your user count

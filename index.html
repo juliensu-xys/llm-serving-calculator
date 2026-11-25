@@ -52,10 +52,11 @@ ul{padding-left:20px}li{margin:4px 0}
 </style></head><body>
 <header class="band top"><div class="wrap">
 <h1>LLM serving calculator: compare two GPU rigs</h1>
-<p class="lede">Pick a GPU and a model for each rig. The presets fill in every hardware and model number, so you only type in your workload. Open "Numbers behind the preset" on a rig to see or override any value.</p>
+<p class="lede">Pick a GPU and a model for each rig. The presets fill in every hardware and model number, and the workload scenarios fill in the workload. Open "Numbers behind the preset" on a rig to see or override any value.</p>
 <div class="grid">
 <div><div class="rigs" id="rigs"></div>
 <div class="card wl" id="wl">
+<div style="grid-column:1/-1"><label for="w-sc">Workload scenario</label><select id="w-sc"></select><p class="note" id="w-scd" style="margin:6px 0 0"></p></div>
 <div><label for="w-p">Prompt / context (tokens)</label><input id="w-p" type="number" min="1" value="32000"></div>
 <div><label for="w-o">Output per reply (tokens)</label><input id="w-o" type="number" min="1" value="1000"></div>
 <div><label for="w-u">Concurrent users</label><input id="w-u" type="number" min="1" value="50"></div>
@@ -116,6 +117,17 @@ const PREC={bf16:['BF16',2],fp8:['FP8',1],nvfp4:['NVFP4 / INT4',0.5625],mix:['Na
 const F=[['mem','Memory per GPU (GB)'],['bw','Bandwidth per GPU (TB/s)'],['fp8','Dense FP8 TFLOPS per GPU'],['tot','Total params (B)'],['act','Active params (B)'],['kv','KV bytes/token (BF16)'],['cap','Attended tokens cap (0 = full)'],['af','Attention FLOPs per context token']];
 const DEF={a:{gpu:'pro6000',n:2,model:'dsv4flash'},b:{gpu:'b300',n:8,model:'dsv4flash'}};
 const $=id=>document.getElementById(id);
+const SC=[
+{id:'chat',n:'Chat assistant',p:2000,o:500,u:100,kv:'fp8',s:'1',d:'Short multi-turn chat with moderate replies and many concurrent users.'},
+{id:'coding',n:'Coding agent (IDE / CLI)',p:64000,o:2000,u:50,kv:'fp8',s:'1.6',d:'Agent with files, tool results and history in context; generates diffs and tool calls.'},
+{id:'repo',n:'Repo-scale code review',p:200000,o:4000,u:10,kv:'fp8',s:'1',d:'Large slices of a codebase in one prompt; few users, long prefill.'},
+{id:'swarm',n:'Agent swarm (parallel sub-agents)',p:32000,o:1000,u:300,kv:'fp8',s:'1',d:'A planner fans out to hundreds of sub-agents at once; throughput matters most.'},
+{id:'rag',n:'RAG / document Q&A',p:16000,o:400,u:200,kv:'fp8',s:'1',d:'Retrieved passages in the prompt, short answers, high concurrency.'},
+{id:'reason',n:'Reasoning / deep research',p:8000,o:16000,u:20,kv:'fp8',s:'1.6',d:'Long thinking traces; output length dominates and decode speed is the experience.'},
+{id:'solo',n:'Single developer, fastest replies',p:8000,o:1000,u:1,kv:'fp8',s:'1.6',d:'One user; shows the per-user speed ceiling of the rig.'},
+{id:'batch',n:'Offline batch (summaries, evals)',p:4000,o:300,u:2000,kv:'fp8',s:'1',d:'Queue-driven jobs; only total throughput matters, latency does not.'},
+{id:'custom',n:'Custom',d:'Your own values: editing any workload field switches here.'}];
+const WF=[['p','w-p'],['o','w-o'],['u','w-u'],['kv','w-kv'],['s','w-s']];
 const opt=(arr,sel)=>arr.map(x=>`<option value="${x.id}"${x.id===sel?' selected':''}>${x.n}</option>`).join('');
 $('rigs').innerHTML=['a','b'].map(k=>`<div class="card rig"><h3><i class="dot" style="background:var(--${k})"></i>Rig ${k.toUpperCase()}${k==='a'?' (current)':' (upgrade)'}</h3>
 <div class="row2"><div><label for="${k}-gpu">GPU</label><select id="${k}-gpu">${opt(GPUS,DEF[k].gpu)}</select></div><div><label for="${k}-n">Count</label><input id="${k}-n" type="number" min="1" value="${DEF[k].n}"></div></div>
@@ -181,8 +193,14 @@ function table(){const L=Math.max(R.a.sweep.length,R.b.sweep.length);let h='<tab
  ['a','b'].forEach(k=>R[k].sweep.forEach(([b,v])=>h+=`<tr><td>${k.toUpperCase()}</td><td>${fmt(b)}</td><td>${fmt(v.per,1)}</td><td>${fmt(v.agg)}</td><td>${v.bound}</td></tr>`));$('tbl').innerHTML=L?h+'</tbody></table>':'<p class="note">Nothing fits.</p>'}
 const IDS=()=>[...document.querySelectorAll('input,select')].map(e=>e.id).filter(Boolean);
 function save(){try{localStorage.setItem('llmcalc1',JSON.stringify(Object.fromEntries(IDS().map(i=>[i,$(i).value]))))}catch(e){}}
+$('w-sc').innerHTML=opt(SC,'coding');
+const fillSc=()=>{const c=SC.find(x=>x.id===$('w-sc').value);$('w-scd').textContent=c.d;if(c.id!=='custom')WF.forEach(([f,id])=>$(id).value=c[f])};
+$('w-sc').addEventListener('change',()=>{fillSc();render()});
+WF.forEach(([,id])=>$(id).addEventListener('input',()=>{const c=SC.find(x=>x.id===$('w-sc').value);if(c.id!=='custom'&&WF.some(([f,i])=>String($(i).value)!==String(c[f]))){$('w-sc').value='custom';$('w-scd').textContent=SC.at(-1).d}}));
+fillSc();
 ['a','b'].forEach(k=>{fillG(k);fillM(k);$(k+'-gpu').addEventListener('change',()=>{fillG(k);render()});$(k+'-model').addEventListener('change',()=>{fillM(k);render()})});
 try{const s=JSON.parse(localStorage.getItem('llmcalc1')||'null');if(s)Object.entries(s).forEach(([i,v])=>{if($(i))$(i).value=v})}catch(e){}
+$('w-scd').textContent=SC.find(x=>x.id===$('w-sc').value).d;
 document.addEventListener('input',e=>{if(e.target.matches('input,select'))render()});
 const ro=new ResizeObserver(drawAll);ro.observe($('f1'));ro.observe($('f2'));
 render();
