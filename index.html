@@ -93,7 +93,7 @@ ul{padding-left:20px}li{margin:4px 0}
 <div><label for="x-ov">Per-step overhead ms (blank = auto)</label><input id="x-ov" type="number" step="0.5" placeholder="auto"></div>
 </div><p class="note">Auto overhead: 1.5 ms on one GPU; 3 + 0.25 ms per GPU over NVLink; 3 + 1.5 ms per extra GPU over PCIe.</p></details>
 <h3 style="margin-top:22px">Where the preset numbers come from</h3>
-<p class="note">GPUs: NVIDIA datasheets (B300 288 GB at 8 TB/s, 4.5 PF dense FP8; B200 HGX 180 GB; H200 141 GB at 4.8 TB/s; H100 80 GB at 3.35 TB/s; RTX PRO 6000 96 GB at 1.79 TB/s). The RTX PRO 6000 FP8 figure is derived from its 4,000 sparse FP4 TOPS. Models: official model cards for total/active params and context (DeepSeek V4 Pro 1.6T/49B, V4 Flash 284B/13B, GLM-5 744B/40B, Kimi K2.6 1T/32B, Qwen3.5-397B-A17B, Gemma 4 26B-A4B 25.2B/3.8B, DeepSeek-R1 671B/37B). KV bytes/token are computed from each architecture's attention config. The DeepSeek V4 KV and attention values are estimates (DeepSeek reports about 90% less KV than V3.2). These are marked "est." in the model list. "Native FP4/FP8 mix" assumes ≈0.6 bytes/param.</p>
+<p class="note">GPUs: NVIDIA datasheets (B300 288 GB at 8 TB/s, 4.5 PF dense FP8; B200 HGX 180 GB; H200 141 GB at 4.8 TB/s; H100 80 GB at 3.35 TB/s; RTX PRO 6000 96 GB at 1.79 TB/s). The RTX PRO 6000 FP8 figure is derived from its 4,000 sparse FP4 TOPS. Models: official model cards for total/active params and context (Kimi K3 and K3.1 Pro 2.8T/104B, 24 MLA/DSA attention layers of 93; Qwen3.8-2.4T-A95B, 23 full-attention layers with 4 KV heads; GLM-5.2 744B/40B with 1M context; DeepSeek V4 Pro 1.6T/49B, V4 Flash 284B/13B, GLM-5 744B/40B, Kimi K2.6 1T/32B, Qwen3.5-397B-A17B, Gemma 4 26B-A4B 25.2B/3.8B, DeepSeek-R1 671B/37B). KV bytes/token are computed from each architecture's attention config. The DeepSeek V4 KV and attention values are estimates (DeepSeek reports about 90% less KV than V3.2). These are marked "est." in the model list. "Native FP4/FP8 mix" assumes ≈0.6 bytes/param.</p>
 </div></section>
 
 <script>{
@@ -105,6 +105,10 @@ const GPUS=[
 {id:'pro6000',n:'RTX PRO 6000 Blackwell',mem:96,bw:1.792,fp8:1000,link:'pcie'},
 {id:'custom',n:'Custom GPU',mem:100,bw:3,fp8:2000,link:'pcie'}];
 const MODELS=[
+{id:'kimik31',n:'Kimi K3.1 Pro (2.8T / 104B active)',tot:2800,act:104,kv:27648,cap:2048,af:5.0e6,ctx:1048576,prec:'nvfp4'},
+{id:'kimik3',n:'Kimi K3 (2.8T / 104B active)',tot:2800,act:104,kv:27648,cap:0,af:5.0e6,ctx:1048576,prec:'nvfp4'},
+{id:'qwen38',n:'Qwen3.8-2.4T-A95B (2.4T / 95B active)',tot:2400,act:95,kv:94208,cap:0,af:1.51e6,ctx:262144,prec:'fp8'},
+{id:'glm52',n:'GLM-5.2 (744B / 40B active)',tot:744,act:40,kv:89856,cap:2048,af:10.9e6,ctx:1048576,prec:'fp8'},
 {id:'dsv4pro',n:'DeepSeek V4 Pro (1.6T / 49B active, est.)',tot:1600,act:49,kv:7000,cap:2048,af:17e6,ctx:1048576,prec:'mix'},
 {id:'dsv4flash',n:'DeepSeek V4 Flash (284B / 13B active, est.)',tot:284,act:13,kv:4000,cap:2048,af:8e6,ctx:1048576,prec:'mix'},
 {id:'glm5',n:'GLM-5 / 5.1 (744B / 40B active)',tot:744,act:40,kv:89856,cap:2048,af:10.9e6,ctx:202752,prec:'fp8'},
