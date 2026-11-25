@@ -40,8 +40,7 @@ details{margin-top:10px}summary{cursor:pointer;font-size:14px;font-weight:600;mi
 .big{font-family:Outfit,Inter,sans-serif;font-size:clamp(26px,3vw,36px);font-weight:600}
 .status{font-size:14px;margin:4px 0;display:flex;gap:6px}.status b{flex:none}
 .bad{color:var(--warn)}.good{color:var(--ok)}
-.charts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}
-@media(max-width:900px){.charts{grid-template-columns:minmax(0,1fr)}}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px}
 .fig{position:relative;min-height:300px}.fig>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:14px;margin:4px 0 8px}.legend span{display:flex;gap:6px;align-items:center}
 .tip{position:absolute;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:13px;white-space:nowrap;display:none;box-shadow:0 4px 14px #0002}
@@ -60,6 +59,7 @@ ul{padding-left:20px}li{margin:4px 0}
 <div><label for="w-p">Prompt / context (tokens)</label><input id="w-p" type="number" min="1" value="32000"></div>
 <div><label for="w-o">Output per reply (tokens)</label><input id="w-o" type="number" min="1" value="1000"></div>
 <div><label for="w-u">Concurrent users</label><input id="w-u" type="number" min="1" value="50"></div>
+<div><label for="w-n">New prompt tokens per turn</label><input id="w-n" type="number" min="1" value="8000"></div>
 <div><label for="w-kv">KV cache precision</label><select id="w-kv"><option value="fp8">FP8</option><option value="bf16">BF16</option></select></div>
 <div><label for="w-s">Speculative decoding gain</label><select id="w-s"><option value="1">Off (1.0×)</option><option value="1.6">MTP / draft (≈1.6×)</option><option value="2">Aggressive (≈2×)</option></select></div>
 </div></div>
@@ -68,10 +68,11 @@ ul{padding-left:20px}li{margin:4px 0}
 
 <section class="band"><div class="wrap">
 <h2>How throughput moves as you add users</h2>
-<div class="legend"><span><i class="dot" style="background:var(--a)"></i>Rig A</span><span><i class="dot" style="background:var(--b)"></i>Rig B</span><span class="note">Dashed line: your user count. Curves stop where the KV cache is full.</span></div>
+<div class="legend"><span><i class="dot" style="background:var(--a)"></i>Rig A</span><span><i class="dot" style="background:var(--b)"></i>Rig B</span><span class="note">Dashed line: your user count. Curves stop where the KV cache is full. All three include prompt processing (prefill).</span></div>
 <div class="charts">
 <div><h3>Total tokens/s across all users</h3><div class="fig" id="f1"><svg id="s1" role="img" aria-label="Aggregate tokens per second versus concurrent users"></svg><div class="tip" id="t1"></div></div></div>
 <div><h3>Tokens/s seen by each user</h3><div class="fig" id="f2"><svg id="s2" role="img" aria-label="Per-user tokens per second versus concurrent users"></svg><div class="tip" id="t2"></div></div></div>
+<div><h3>Time to first token under load</h3><div class="fig" id="f3"><svg id="s3" role="img" aria-label="Time to first token versus concurrent users"></svg><div class="tip" id="t3"></div></div></div>
 </div>
 <details><summary>Show the chart data as a table</summary><div class="scroll" id="tbl"></div></details>
 </div></section>
@@ -82,8 +83,9 @@ ul{padding-left:20px}li{margin:4px 0}
 <li><b>Fit:</b> weights = total params × bytes/param. Usable HBM = GPUs × memory × usable fraction. What's left holds KV cache: (prompt + output) × KV bytes/token per user. That sets the user limit.</li>
 <li><b>Decode step</b> = max(memory time, compute time) + fixed per-step overhead. Memory time = (weights touched + KV read) ÷ (aggregate bandwidth × efficiency). For MoE models, the share of experts touched grows with batch size as 1 − (1 − active/total)<sup>batch</sup>, so at large batches the whole model is read every step. Compute = (2 × active params + attention FLOPs) × batch ÷ (FP8 FLOPS × efficiency).</li>
 <li><b>Per-user tok/s</b> = 1 ÷ step time. <b>Total tok/s</b> = that × users. Bigger memory doesn't raise per-user speed, but it allows more users, and that raises total throughput.</li>
-<li><b>TTFT</b> = prefill FLOPs ÷ (FP8 FLOPS × prefill efficiency), plus one full read of the weights, on an otherwise idle rig. Under load it will be longer.</li>
-<li><b>Calibration:</b> default efficiencies were tuned so the model reproduces two published DeepSeek-R1 points on 8× B200: ~250 tok/s for a single user (with MTP) and ~36k tok/s total at 3,072 concurrent users. Other models and GPUs are extrapolations. Treat results as ±30–50% planning numbers, not benchmarks.</li>
+<li><b>Prefill under load:</b> each reply first processes its new prompt tokens (the rest comes from the prefix cache). Requests/s R = D ÷ (output + t<sub>p</sub> × D), where D is decode-only throughput and t<sub>p</sub> the rig's compute time for one prefill. Total tok/s = R × output. TTFT under load treats prefill as a priority queue: idle TTFT + ρ·t<sub>p</sub> ÷ (2(1 − ρ)), with ρ = R × t<sub>p</sub>.</li>
+<li><b>Idle TTFT</b> = prefill FLOPs ÷ (FP8 FLOPS × prefill efficiency), plus one full read of the weights, on an otherwise idle rig. Under load it will be longer.</li>
+<li><b>Calibration:</b> default efficiencies were tuned so the model reproduces two published DeepSeek-R1 points on 8× B200: ~250 tok/s for a single user (with MTP) and ~36k tok/s total at 3,072 concurrent users (1k input, 2k output). With prefill included, the model gives ~265 tok/s and ~34.8k tok/s for those two points. Other models and GPUs are extrapolations. Treat results as ±30–50% planning numbers, not benchmarks.</li>
 </ul>
 <details><summary>Shared assumptions (editable)</summary><div class="wl" id="as">
 <div><label for="x-uf">Usable memory fraction</label><input id="x-uf" type="number" step="0.01" value="0.9"></div>
@@ -122,16 +124,16 @@ const F=[['mem','Memory per GPU (GB)'],['bw','Bandwidth per GPU (TB/s)'],['fp8',
 const DEF={a:{gpu:'pro6000',n:2,model:'dsv4flash'},b:{gpu:'b300',n:8,model:'dsv4flash'}};
 const $=id=>document.getElementById(id);
 const SC=[
-{id:'chat',n:'Chat assistant',p:2000,o:500,u:100,kv:'fp8',s:'1',d:'Short multi-turn chat with moderate replies and many concurrent users.'},
-{id:'coding',n:'Coding agent (IDE / CLI)',p:64000,o:2000,u:50,kv:'fp8',s:'1.6',d:'Agent with files, tool results and history in context; generates diffs and tool calls.'},
-{id:'repo',n:'Repo-scale code review',p:200000,o:4000,u:10,kv:'fp8',s:'1',d:'Large slices of a codebase in one prompt; few users, long prefill.'},
-{id:'swarm',n:'Agent swarm (parallel sub-agents)',p:32000,o:1000,u:300,kv:'fp8',s:'1',d:'A planner fans out to hundreds of sub-agents at once; throughput matters most.'},
-{id:'rag',n:'RAG / document Q&A',p:16000,o:400,u:200,kv:'fp8',s:'1',d:'Retrieved passages in the prompt, short answers, high concurrency.'},
-{id:'reason',n:'Reasoning / deep research',p:8000,o:16000,u:20,kv:'fp8',s:'1.6',d:'Long thinking traces; output length dominates and decode speed is the experience.'},
-{id:'solo',n:'Single developer, fastest replies',p:8000,o:1000,u:1,kv:'fp8',s:'1.6',d:'One user; shows the per-user speed ceiling of the rig.'},
-{id:'batch',n:'Offline batch (summaries, evals)',p:4000,o:300,u:2000,kv:'fp8',s:'1',d:'Queue-driven jobs; only total throughput matters, latency does not.'},
+{id:'chat',n:'Chat assistant',p:2000,o:500,u:100,np:500,kv:'fp8',s:'1',d:'Short multi-turn chat with moderate replies and many concurrent users.'},
+{id:'coding',n:'Coding agent (IDE / CLI)',p:64000,o:2000,u:50,np:8000,kv:'fp8',s:'1.6',d:'Agent with files, tool results and history in context; generates diffs and tool calls.'},
+{id:'repo',n:'Repo-scale code review',p:200000,o:4000,u:10,np:200000,kv:'fp8',s:'1',d:'Large slices of a codebase in one prompt; few users, long prefill.'},
+{id:'swarm',n:'Agent swarm (parallel sub-agents)',p:32000,o:1000,u:300,np:32000,kv:'fp8',s:'1',d:'A planner fans out to hundreds of sub-agents at once; throughput matters most.'},
+{id:'rag',n:'RAG / document Q&A',p:16000,o:400,u:200,np:16000,kv:'fp8',s:'1',d:'Retrieved passages in the prompt, short answers, high concurrency.'},
+{id:'reason',n:'Reasoning / deep research',p:8000,o:16000,u:20,np:8000,kv:'fp8',s:'1.6',d:'Long thinking traces; output length dominates and decode speed is the experience.'},
+{id:'solo',n:'Single developer, fastest replies',p:8000,o:1000,u:1,np:8000,kv:'fp8',s:'1.6',d:'One user; shows the per-user speed ceiling of the rig.'},
+{id:'batch',n:'Offline batch (summaries, evals)',p:4000,o:300,u:2000,np:4000,kv:'fp8',s:'1',d:'Queue-driven jobs; only total throughput matters, latency does not.'},
 {id:'custom',n:'Custom',d:'Your own values: editing any workload field switches here.'}];
-const WF=[['p','w-p'],['o','w-o'],['u','w-u'],['kv','w-kv'],['s','w-s']];
+const WF=[['p','w-p'],['o','w-o'],['u','w-u'],['np','w-n'],['kv','w-kv'],['s','w-s']];
 const opt=(arr,sel)=>arr.map(x=>`<option value="${x.id}"${x.id===sel?' selected':''}>${x.n}</option>`).join('');
 $('rigs').innerHTML=['a','b'].map(k=>`<div class="card rig"><h3><i class="dot" style="background:var(--${k})"></i>Rig ${k.toUpperCase()}${k==='a'?' (current)':' (upgrade)'}</h3>
 <div class="row2"><div><label for="${k}-gpu">GPU</label><select id="${k}-gpu">${opt(GPUS,DEF[k].gpu)}</select></div><div><label for="${k}-n">Count</label><input id="${k}-n" type="number" min="1" value="${DEF[k].n}"></div></div>
@@ -148,12 +150,14 @@ function calc(k,as,wl){
  const usable=N*mem*1e9*as.uf,W=tot*1e9*bpp,Wa=act*1e9*bpp,kvB=kv*(wl.kv==='fp8'?0.5:1);
  const cMax=wl.p+wl.o,cAvg=wl.p+wl.o/2,kvU=cMax*kvB,fits=W<usable,maxU=fits&&kvU>0?Math.floor((usable-W)/kvU):0;
  const BW=N*bw*1e12*as.bw,FL=N*fl*as.de,ov=(as.ov!==null?as.ov:(N===1?1.5:g.link==='nvlink'?3+0.25*N:3+1.5*(N-1)))/1000,att=Math.min(cAvg,cap),f=tot>0?act/tot:1;
- const step=b=>{const wb=Wa+(W-Wa)*(1-(1-f)**b),tm=(wb+b*att*kvB)/BW,tc=(2*act*1e9+af*att)*b/FL,t=Math.max(tm,tc)+ov;
+ const dstep=b=>{const wb=Wa+(W-Wa)*(1-(1-f)**b),tm=(wb+b*att*kvB)/BW,tc=(2*act*1e9+af*att)*b/FL,t=Math.max(tm,tc)+ov;
   const se=1+(wl.s-1)*Math.max(0,1-tc/t),per=se/t,bound=tc>=tm&&tc>=ov?'compute':tm>=ov?'memory bandwidth':'per-step overhead';return{per,agg:per*b,bound}};
- const P=wl.p,aS=P<=cap?P*P/2:cap*cap/2+(P-cap)*cap,ttft=(2*act*1e9*P+af*aS)/(N*fl*as.pe)+W/BW+ov;
+ const P=wl.p,Pn=Math.min(wl.n,P),pf=(2*act*1e9*Pn+af*Pn*Math.min(cap,Math.max(1,P-Pn/2)))/(N*fl*as.pe),ttft=pf+W/BW+ov;
+ const step=b=>{const d=dstep(b),D=d.agg,Rq=D/(wl.o+pf*D),out=Rq*wl.o,rho=Rq*pf;
+  return{per:out/b,agg:out,ttft:ttft+rho*pf/(2*(1-rho)),pre:rho,dec:D,bound:rho>0.5?'prompt processing (prefill)':d.bound}};
  const users=Math.min(wl.u,maxU),cur=users>0?step(users):null,one=maxU>0?step(1):null,top=maxU>0?step(maxU):null;
  const sweep=[];if(maxU>0){for(let b=1;b<maxU;b*=2)sweep.push([b,step(b)]);sweep.push([maxU,top])}
- return{name:`${N}× ${g.n}`,model:mm.n.split(' (')[0],fits,W,usable,maxU,users,cur,one,top,ttft,ctxOver:cMax>mm.ctx&&mm.id!=='custom',mctx:mm.ctx,sweep}}
+ return{name:`${N}× ${g.n}`,model:mm.n.split(' (')[0],Pn,fits,W,usable,maxU,users,cur,one,top,ttft,ctxOver:cMax>mm.ctx&&mm.id!=='custom',mctx:mm.ctx,sweep}}
 const fmt=(v,d=0)=>v==null||!isFinite(v)?'—':v>=1e4?Math.round(v).toLocaleString():v.toLocaleString(undefined,{maximumFractionDigits:d});
 const fT=s=>s==null||!isFinite(s)?'—':s<1?fmt(s*1000)+' ms':s<120?fmt(s,1)+' s':fmt(s/60,1)+' min';
 function status(r){const out=[];
@@ -161,17 +165,17 @@ function status(r){const out=[];
  else{out.push(`<p class="status good"><b>✓</b>Fits: weights ${fmt(r.W/1e9)} GB of ${fmt(r.usable/1e9)} GB usable, room for ${fmt(r.maxU)} users at this context.</p>`);
   if(r.users<wl().u)out.push(`<p class="status bad"><b>!</b>The KV cache only holds ${fmt(r.maxU)} users; the rest would queue.</p>`)}
  if(r.ctxOver)out.push(`<p class="status bad"><b>!</b>Context exceeds this model's ${fmt(r.mctx)}-token window.</p>`);return out.join('')}
-const wl=()=>({p:Math.max(1,num('w-p')),o:Math.max(1,num('w-o')),u:Math.max(1,Math.round(num('w-u'))),kv:$('w-kv').value,s:parseFloat($('w-s').value)});
+const wl=()=>({p:Math.max(1,num('w-p')),o:Math.max(1,num('w-o')),u:Math.max(1,Math.round(num('w-u'))),n:Math.max(1,num('w-n')),kv:$('w-kv').value,s:parseFloat($('w-s').value)});
 const asm=()=>({uf:num('x-uf'),bw:num('x-bw'),de:num('x-de'),pe:num('x-pe'),ov:$('x-ov').value===''?null:num('x-ov')});
 let R={};
 function render(){const w=wl(),a=asm();R={a:calc('a',a,w),b:calc('b',a,w)};const A=R.a,B=R.b;
  const ratio=(x,y)=>x&&y&&isFinite(x)&&isFinite(y)?fmt(y/x,1)+'×':'—';
- const rows=[[`Per-user speed at ${fmt(w.u)} users (tok/s)`,A.cur?.per,B.cur?.per,true],[`Total throughput at ${fmt(w.u)} users (tok/s)`,A.cur?.agg,B.cur?.agg],[`Time for a ${fmt(w.o)}-token reply`,A.cur?w.o/A.cur.per:null,B.cur?w.o/B.cur.per:null,'t'],['Single-user speed (tok/s)',A.one?.per,B.one?.per],[`TTFT, ${fmt(w.p)}-token prompt (idle)`,A.fits?A.ttft:null,B.fits?B.ttft:null,'t'],['Max users at this context',A.maxU,B.maxU],['Throughput ceiling, KV cache full (tok/s)',A.top?.agg,B.top?.agg]];
+ const rows=[[`Per-user speed at ${fmt(w.u)} users (tok/s)`,A.cur?.per,B.cur?.per,true],[`Total throughput at ${fmt(w.u)} users (tok/s)`,A.cur?.agg,B.cur?.agg],[`TTFT at ${fmt(w.u)} users (under load)`,A.cur?.ttft,B.cur?.ttft,'t'],[`Time for a ${fmt(w.o)}-token reply`,A.cur?w.o/A.cur.per:null,B.cur?w.o/B.cur.per:null,'t'],['Single-user speed (tok/s)',A.one?.per,B.one?.per],[`TTFT, ${fmt(A.Pn)} new tokens (idle)`,A.fits?A.ttft:null,B.fits?B.ttft:null,'t'],['Max users at this context',A.maxU,B.maxU],['Per-user speed at max users (tok/s)',A.top?.per,B.top?.per],['Total throughput at max users (tok/s)',A.top?.agg,B.top?.agg],['TTFT at max users (under load)',A.top?.ttft,B.top?.ttft,'t']];
  $('read').innerHTML=`<h2>Readout</h2><table><thead><tr><th></th><th style="color:var(--a)">Rig A</th><th style="color:var(--b)">Rig B</th><th>B advantage</th></tr></thead><tbody>${rows.map(([l,x,y,t])=>`<tr><td>${l}</td><td${t===true?' class="big"':''}>${t==='t'?fT(x):fmt(x,x<100?1:0)}</td><td${t===true?' class="big"':''}>${t==='t'?fT(y):fmt(y,y<100?1:0)}</td><td>${t==='t'?ratio(y,x):ratio(x,y)}</td></tr>`).join('')}</tbody></table>
- <p class="note" style="margin-top:10px"><b style="color:var(--a)">A</b> ${A.name} · ${A.model}${A.cur?' · limited by '+A.cur.bound:''}</p>${status(A)}
- <p class="note"><b style="color:var(--b)">B</b> ${B.name} · ${B.model}${B.cur?' · limited by '+B.cur.bound:''}</p>${status(B)}`;
+ <p class="note" style="margin-top:10px"><b style="color:var(--a)">A</b> ${A.name} · ${A.model}${A.cur?' · limited by '+A.cur.bound+' · '+fmt(A.cur.pre*100)+'% of GPU time on prefill':''}</p>${status(A)}
+ <p class="note"><b style="color:var(--b)">B</b> ${B.name} · ${B.model}${B.cur?' · limited by '+B.cur.bound+' · '+fmt(B.cur.pre*100)+'% of GPU time on prefill':''}</p>${status(B)}`;
  drawAll();table();save()}
-function chart(svgId,tipId,key,logY){const s=$(svgId),tip=$(tipId),W=s.clientWidth,H=s.clientHeight;if(!W)return;
+function chart(svgId,tipId,key,logY,unit){const s=$(svgId),tip=$(tipId),W=s.clientWidth,H=s.clientHeight;if(!W)return;
  const m={l:W<520?44:58,r:12,t:10,b:34},S=[['a',R.a.sweep],['b',R.b.sweep]].filter(x=>x[1].length),all=S.flatMap(x=>x[1]);
  if(!all.length){s.innerHTML=`<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="var(--mut)">Neither rig fits this model</text>`;return}
  const xs=all.map(p=>p[0]),ys=all.map(p=>p[1][key]),x0=1,x1=Math.max(2,...xs,wl().u),lx=v=>m.l+(Math.log(v)-Math.log(x0))/(Math.log(x1)-Math.log(x0))*(W-m.l-m.r);
@@ -179,8 +183,8 @@ function chart(svgId,tipId,key,logY){const s=$(svgId),tip=$(tipId),W=s.clientWid
  const ly=v=>logY?H-m.b-(Math.log10(v)-Math.log10(y0))/(Math.log10(y1)-Math.log10(y0))*(H-m.t-m.b):H-m.b-(v-y0)/(y1-y0)*(H-m.t-m.b);
  const yt=logY?Array.from({length:Math.round(Math.log10(y1/y0))+1},(_,i)=>y0*10**i):[0,1,2,3,4].map(i=>y1/4*i);
  const xt=[];for(let v=1;v<=x1;v*=W<520?100:10)xt.push(v);
- const lab=v=>v>=1e6?v/1e6+'M':v>=1e3?v/1e3+'k':fmt(v);
- let h=yt.map(v=>`<line x1="${m.l}" x2="${W-m.r}" y1="${ly(v)}" y2="${ly(v)}" stroke="var(--line)"/><text x="${m.l-6}" y="${ly(v)+4}" text-anchor="end" font-size="12" fill="var(--mut)">${lab(Math.round(v))}</text>`).join('');
+ const lab=v=>v>=1e6?v/1e6+'M':v>=1e3?v/1e3+'k':fmt(v);const ylab=v=>unit==='s'?fT(v):lab(Math.round(v));
+ let h=yt.map(v=>`<line x1="${m.l}" x2="${W-m.r}" y1="${ly(v)}" y2="${ly(v)}" stroke="var(--line)"/><text x="${m.l-6}" y="${ly(v)+4}" text-anchor="end" font-size="12" fill="var(--mut)">${ylab(v)}</text>`).join('');
  h+=xt.map(v=>`<text x="${lx(v)}" y="${H-m.b+18}" text-anchor="middle" font-size="12" fill="var(--mut)">${lab(v)}</text>`).join('')+`<text x="${W-m.r}" y="${H-2}" text-anchor="end" font-size="12" fill="var(--mut)">concurrent users (log)</text>`;
  const ux=lx(Math.min(wl().u,x1));h+=`<line x1="${ux}" x2="${ux}" y1="${m.t}" y2="${H-m.b}" stroke="var(--ink)" stroke-dasharray="4 4" opacity=".5"/>`;
  S.forEach(([k,p])=>{h+=`<polyline fill="none" stroke="var(--${k})" stroke-width="2" points="${p.map(q=>lx(q[0])+','+ly(q[1][key])).join(' ')}"/>`;const e=p[p.length-1];h+=`<circle cx="${lx(e[0])}" cy="${ly(e[1][key])}" r="4.5" fill="var(--${k})" stroke="var(--bg)" stroke-width="2"/>`});
@@ -189,12 +193,12 @@ function chart(svgId,tipId,key,logY){const s=$(svgId),tip=$(tipId),W=s.clientWid
  hit.onmousemove=e=>{const r=s.getBoundingClientRect(),px=e.clientX-r.left,v=Math.exp(Math.log(x0)+(px-m.l)/(W-m.l-m.r)*(Math.log(x1)-Math.log(x0)));
   const near=S.map(([k,p])=>[k,p.reduce((a,q)=>Math.abs(Math.log(q[0]/v))<Math.abs(Math.log(a[0]/v))?q:a)]);
   cx.setAttribute('x1',px);cx.setAttribute('x2',px);cx.setAttribute('visibility','visible');
-  tip.innerHTML=near.map(([k,q])=>`<span style="color:var(--${k})">●</span> Rig ${k.toUpperCase()}: ${fmt(q[1][key],1)} tok/s at ${fmt(q[0])} users`).join('<br>');tip.style.display='block';
+  tip.innerHTML=near.map(([k,q])=>`<span style="color:var(--${k})">●</span> Rig ${k.toUpperCase()}: ${unit==='s'?fT(q[1][key]):fmt(q[1][key],1)+' tok/s'} at ${fmt(q[0])} users`).join('<br>');tip.style.display='block';
   tip.style.left=Math.min(px+12,W-tip.offsetWidth)+'px';tip.style.top='8px'};
  hit.onmouseleave=()=>{tip.style.display='none';cx.setAttribute('visibility','hidden')}}
-function drawAll(){chart('s1','t1','agg',true);chart('s2','t2','per',false)}
-function table(){const L=Math.max(R.a.sweep.length,R.b.sweep.length);let h='<table class="data"><thead><tr><th>Rig</th><th>Users</th><th>Per-user tok/s</th><th>Total tok/s</th><th>Limited by</th></tr></thead><tbody>';
- ['a','b'].forEach(k=>R[k].sweep.forEach(([b,v])=>h+=`<tr><td>${k.toUpperCase()}</td><td>${fmt(b)}</td><td>${fmt(v.per,1)}</td><td>${fmt(v.agg)}</td><td>${v.bound}</td></tr>`));$('tbl').innerHTML=L?h+'</tbody></table>':'<p class="note">Nothing fits.</p>'}
+function drawAll(){chart('s1','t1','agg',true);chart('s2','t2','per',false);chart('s3','t3','ttft',true,'s')}
+function table(){const L=Math.max(R.a.sweep.length,R.b.sweep.length);let h='<table class="data"><thead><tr><th>Rig</th><th>Users</th><th>Per-user tok/s</th><th>Total tok/s</th><th>TTFT</th><th>Prefill share</th><th>Limited by</th></tr></thead><tbody>';
+ ['a','b'].forEach(k=>R[k].sweep.forEach(([b,v])=>h+=`<tr><td>${k.toUpperCase()}</td><td>${fmt(b)}</td><td>${fmt(v.per,1)}</td><td>${fmt(v.agg)}</td><td>${fT(v.ttft)}</td><td>${fmt(v.pre*100)}%</td><td>${v.bound}</td></tr>`));$('tbl').innerHTML=L?h+'</tbody></table>':'<p class="note">Nothing fits.</p>'}
 const IDS=()=>[...document.querySelectorAll('input,select')].map(e=>e.id).filter(Boolean);
 function save(){try{localStorage.setItem('llmcalc1',JSON.stringify(Object.fromEntries(IDS().map(i=>[i,$(i).value]))))}catch(e){}}
 $('w-sc').innerHTML=opt(SC,'coding');
@@ -206,6 +210,6 @@ fillSc();
 try{const s=JSON.parse(localStorage.getItem('llmcalc1')||'null');if(s)Object.entries(s).forEach(([i,v])=>{if($(i))$(i).value=v})}catch(e){}
 $('w-scd').textContent=SC.find(x=>x.id===$('w-sc').value).d;
 document.addEventListener('input',e=>{if(e.target.matches('input,select'))render()});
-const ro=new ResizeObserver(drawAll);ro.observe($('f1'));ro.observe($('f2'));
+const ro=new ResizeObserver(drawAll);ro.observe($('f1'));ro.observe($('f2'));ro.observe($('f3'));
 render();
 }</script></body></html>
