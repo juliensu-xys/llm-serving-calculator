@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LLM Serving Calculator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* VOICE: engineering graphics desk — exact, calm, numbers first.
+   IDEA: a test-bench spec sheet: two rigs on the bench, one readout comparing them.
+   PICTURE: the live readout (big tok/s per rig) plus two throughput-vs-concurrency curves.
+   COLOUR and TYPE: sky #4fb3e8 band, ink #10223a, rig A blue, rig B orange; Outfit + Inter.
+   LAYOUT: band with the two rigs + workload, readout beside it, curves below, assumptions last. */
+:root{color-scheme:light dark;--bg:light-dark(#fff,#0b1726);--band:light-dark(#4fb3e8,#123a5c);--ink:light-dark(#10223a,#e8f1f8);--mut:light-dark(#4a5d75,#9fb3c8);--card:light-dark(#fff,#10243a);--line:light-dark(#d5e2ee,#24405e);--a:light-dark(#257de0,#338ced);--b:light-dark(#f47230,#e76624);--acc:#ff7a1a;--warn:light-dark(#b3261e,#ff8a80);--ok:light-dark(#0a7d1d,#4cd964)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Inter,system-ui,sans-serif;overflow-x:clip}
+h1,h2,h3{font-family:Outfit,Inter,sans-serif;line-height:1.05;text-wrap:balance;margin:0}
+h1{font-size:clamp(32px,4.4vw,48px);font-weight:700}h2{font-size:24px;font-weight:600;margin-bottom:12px}h3{font-size:18px;font-weight:600}
+.band{padding:clamp(24px,4vw,56px) max(5vw,16px)}
+.top{background:var(--band)}
+.wrap{max-width:1240px;margin:0 auto}
+.lede{max-width:70ch;margin:10px 0 22px;color:var(--ink)}
+.grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:20px;align-items:start}
+@media(max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+.rigs{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+@media(max-width:600px){.rigs{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.rig h3{display:flex;align-items:center;gap:8px;margin-bottom:10px}.dot{width:12px;height:12px;border-radius:50%;flex:none}
+label{display:block;font-size:13px;color:var(--mut);margin:8px 0 3px}
+select,input{width:100%;min-height:44px;font:16px Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+select:focus-visible,input:focus-visible,summary:focus-visible,button:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.row2{display:grid;grid-template-columns:minmax(0,1fr) 92px;gap:8px}
+details{margin-top:10px}summary{cursor:pointer;font-size:14px;font-weight:600;min-height:32px;padding-top:6px}
+.adv{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 8px}
+.wl{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:0 10px;margin-top:14px}
+.note{font-size:13px;color:var(--mut)}
+.read table{width:100%;border-collapse:collapse}
+.read th,.read td{padding:9px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+.read th:first-child,.read td:first-child{text-align:left;white-space:normal}
+.read thead th{font-size:13px;color:var(--mut);font-weight:600}
+.big{font-family:Outfit,Inter,sans-serif;font-size:clamp(26px,3vw,36px);font-weight:600}
+.status{font-size:14px;margin:4px 0;display:flex;gap:6px}.status b{flex:none}
+.bad{color:var(--warn)}.good{color:var(--ok)}
+.charts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}
+@media(max-width:900px){.charts{grid-template-columns:minmax(0,1fr)}}
+.fig{position:relative;min-height:300px}.fig>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:14px;margin:4px 0 8px}.legend span{display:flex;gap:6px;align-items:center}
+.tip{position:absolute;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:13px;white-space:nowrap;display:none;box-shadow:0 4px 14px #0002}
+table.data{border-collapse:collapse;width:100%;font-size:14px}table.data td,table.data th{padding:6px;border-bottom:1px solid var(--line);text-align:right}table.data td:first-child,table.data th:first-child{text-align:left}
+.scroll{overflow-x:auto}
+ul{padding-left:20px}li{margin:4px 0}
+@media(max-width:600px){table{font-size:13px}}
+</style></head><body>
+<header class="band top"><div class="wrap">
+<h1>LLM serving calculator: compare two GPU rigs</h1>
+<p class="lede">Pick a GPU and a model for each rig. The presets fill in every hardware and model number, so you only type in your workload. Open "Numbers behind the preset" on a rig to see or override any value.</p>
+<div class="grid">
+<div><div class="rigs" id="rigs"></div>
+<div class="card wl" id="wl">
+<div><label for="w-p">Prompt / context (tokens)</label><input id="w-p" type="number" min="1" value="32000"></div>
+<div><label for="w-o">Output per reply (tokens)</label><input id="w-o" type="number" min="1" value="1000"></div>
+<div><label for="w-u">Concurrent users</label><input id="w-u" type="number" min="1" value="50"></div>
+<div><label for="w-kv">KV cache precision</label><select id="w-kv"><option value="fp8">FP8</option><option value="bf16">BF16</option></select></div>
+<div><label for="w-s">Speculative decoding gain</label><select id="w-s"><option value="1">Off (1.0×)</option><option value="1.6">MTP / draft (≈1.6×)</option><option value="2">Aggressive (≈2×)</option></select></div>
+</div></div>
+<div class="card read" id="read" aria-live="polite"></div>
+</div></div></header>
+
+<section class="band"><div class="wrap">
+<h2>How throughput moves as you add users</h2>
+<div class="legend"><span><i class="dot" style="background:var(--a)"></i>Rig A</span><span><i class="dot" style="background:var(--b)"></i>Rig B</span><span class="note">Dashed line: your user count. Curves stop where the KV cache is full.</span></div>
+<div class="charts">
+<div><h3>Total tokens/s across all users</h3><div class="fig" id="f1"><svg id="s1" role="img" aria-label="Aggregate tokens per second versus concurrent users"></svg><div class="tip" id="t1"></div></div></div>
+<div><h3>Tokens/s seen by each user</h3><div class="fig" id="f2"><svg id="s2" role="img" aria-label="Per-user tokens per second versus concurrent users"></svg><div class="tip" id="t2"></div></div></div>
+</div>
+<details><summary>Show the chart data as a table</summary><div class="scroll" id="tbl"></div></details>
+</div></section>
+
+<section class="band" style="border-top:1px solid var(--line)"><div class="wrap">
+<h2>How it calculates</h2>
+<ul>
+<li><b>Fit:</b> weights = total params × bytes/param. Usable HBM = GPUs × memory × usable fraction. What's left holds KV cache: (prompt + output) × KV bytes/token per user. That sets the user limit.</li>
+<li><b>Decode step</b> = max(memory time, compute time) + fixed per-step overhead. Memory time = (weights touched + KV read) ÷ (aggregate bandwidth × efficiency). For MoE models, the share of experts touched grows with batch size as 1 − (1 − active/total)<sup>batch</sup>, so at large batches the whole model is read every step. Compute = (2 × active params + attention FLOPs) × batch ÷ (FP8 FLOPS × efficiency).</li>
+<li><b>Per-user tok/s</b> = 1 ÷ step time. <b>Total tok/s</b> = that × users. Bigger memory doesn't raise per-user speed, but it allows more users, and that raises total throughput.</li>
+<li><b>TTFT</b> = prefill FLOPs ÷ (FP8 FLOPS × prefill efficiency), plus one full read of the weights, on an otherwise idle rig. Under load it will be longer.</li>
+<li><b>Calibration:</b> default efficiencies were tuned so the model reproduces two published DeepSeek-R1 points on 8× B200: ~250 tok/s for a single user (with MTP) and ~36k tok/s total at 3,072 concurrent users. Other models and GPUs are extrapolations. Treat results as ±30–50% planning numbers, not benchmarks.</li>
+</ul>
+<details><summary>Shared assumptions (editable)</summary><div class="wl" id="as">
+<div><label for="x-uf">Usable memory fraction</label><input id="x-uf" type="number" step="0.01" value="0.9"></div>
+<div><label for="x-bw">Bandwidth efficiency</label><input id="x-bw" type="number" step="0.05" value="0.6"></div>
+<div><label for="x-de">Decode compute efficiency</label><input id="x-de" type="number" step="0.01" value="0.12"></div>
+<div><label for="x-pe">Prefill compute efficiency</label><input id="x-pe" type="number" step="0.05" value="0.4"></div>
+<div><label for="x-ov">Per-step overhead ms (blank = auto)</label><input id="x-ov" type="number" step="0.5" placeholder="auto"></div>
+</div><p class="note">Auto overhead: 1.5 ms on one GPU; 3 + 0.25 ms per GPU over NVLink; 3 + 1.5 ms per extra GPU over PCIe.</p></details>
+<h3 style="margin-top:22px">Where the preset numbers come from</h3>
+<p class="note">GPUs: NVIDIA datasheets (B300 288 GB at 8 TB/s, 4.5 PF dense FP8; B200 HGX 180 GB; H200 141 GB at 4.8 TB/s; H100 80 GB at 3.35 TB/s; RTX PRO 6000 96 GB at 1.79 TB/s). The RTX PRO 6000 FP8 figure is derived from its 4,000 sparse FP4 TOPS. Models: official model cards for total/active params and context (DeepSeek V4 Pro 1.6T/49B, V4 Flash 284B/13B, GLM-5 744B/40B, Kimi K2.6 1T/32B, Qwen3.5-397B-A17B, Gemma 4 26B-A4B 25.2B/3.8B, DeepSeek-R1 671B/37B). KV bytes/token are computed from each architecture's attention config. The DeepSeek V4 KV and attention values are estimates (DeepSeek reports about 90% less KV than V3.2). These are marked "est." in the model list. "Native FP4/FP8 mix" assumes ≈0.6 bytes/param.</p>
+</div></section>
+
+<script>{
+const GPUS=[
+{id:'b300',n:'NVIDIA B300 (HGX)',mem:288,bw:8,fp8:4500,link:'nvlink'},
+{id:'b200',n:'NVIDIA B200 (HGX)',mem:180,bw:8,fp8:4500,link:'nvlink'},
+{id:'h200',n:'NVIDIA H200 SXM',mem:141,bw:4.8,fp8:1979,link:'nvlink'},
+{id:'h100',n:'NVIDIA H100 SXM',mem:80,bw:3.35,fp8:1979,link:'nvlink'},
+{id:'pro6000',n:'RTX PRO 6000 Blackwell',mem:96,bw:1.792,fp8:1000,link:'pcie'},
+{id:'custom',n:'Custom GPU',mem:100,bw:3,fp8:2000,link:'pcie'}];
+const MODELS=[
+{id:'dsv4pro',n:'DeepSeek V4 Pro (1.6T / 49B active, est.)',tot:1600,act:49,kv:7000,cap:2048,af:17e6,ctx:1048576,prec:'mix'},
+{id:'dsv4flash',n:'DeepSeek V4 Flash (284B / 13B active, est.)',tot:284,act:13,kv:4000,cap:2048,af:8e6,ctx:1048576,prec:'mix'},
+{id:'glm5',n:'GLM-5 / 5.1 (744B / 40B active)',tot:744,act:40,kv:89856,cap:2048,af:10.9e6,ctx:202752,prec:'fp8'},
+{id:'kimi',n:'Kimi K2.6 (1T / 32B active)',tot:1000,act:32,kv:70272,cap:0,af:8.5e6,ctx:262144,prec:'fp8'},
+{id:'qwen',n:'Qwen3.5-397B-A17B (397B / 17B active)',tot:397,act:17,kv:30720,cap:0,af:0.5e6,ctx:262144,prec:'fp8'},
+{id:'gemma',n:'Gemma 4 26B-A4B (25.2B / 3.8B active)',tot:25.2,act:3.8,kv:217600,cap:0,af:1.5e6,ctx:262144,prec:'bf16'},
+{id:'r1',n:'DeepSeek-R1 (671B / 37B active)',tot:671,act:37,kv:70272,cap:0,af:17e6,ctx:163840,prec:'fp8'},
+{id:'custom',n:'Custom model',tot:70,act:70,kv:160000,cap:0,af:1e6,ctx:131072,prec:'fp8'}];
+const PREC={bf16:['BF16',2],fp8:['FP8',1],nvfp4:['NVFP4 / INT4',0.5625],mix:['Native FP4/FP8 mix',0.6]};
+const F=[['mem','Memory per GPU (GB)'],['bw','Bandwidth per GPU (TB/s)'],['fp8','Dense FP8 TFLOPS per GPU'],['tot','Total params (B)'],['act','Active params (B)'],['kv','KV bytes/token (BF16)'],['cap','Attended tokens cap (0 = full)'],['af','Attention FLOPs per context token']];
+const DEF={a:{gpu:'pro6000',n:2,model:'dsv4flash'},b:{gpu:'b300',n:8,model:'dsv4flash'}};
+const $=id=>document.getElementById(id);
+const opt=(arr,sel)=>arr.map(x=>`<option value="${x.id}"${x.id===sel?' selected':''}>${x.n}</option>`).join('');
+$('rigs').innerHTML=['a','b'].map(k=>`<div class="card rig"><h3><i class="dot" style="background:var(--${k})"></i>Rig ${k.toUpperCase()}${k==='a'?' (current)':' (upgrade)'}</h3>
+<div class="row2"><div><label for="${k}-gpu">GPU</label><select id="${k}-gpu">${opt(GPUS,DEF[k].gpu)}</select></div><div><label for="${k}-n">Count</label><input id="${k}-n" type="number" min="1" value="${DEF[k].n}"></div></div>
+<label for="${k}-model">Model</label><select id="${k}-model">${opt(MODELS,DEF[k].model)}</select>
+<label for="${k}-prec">Weight precision</label><select id="${k}-prec">${Object.entries(PREC).map(([v,[t]])=>`<option value="${v}">${t}</option>`).join('')}</select>
+<details><summary>Numbers behind the preset</summary><div class="adv">${F.map(([f,t])=>`<div><label for="${k}-${f}">${t}</label><input id="${k}-${f}" type="number" step="any"></div>`).join('')}</div></details></div>`).join('');
+const fillG=k=>{const g=GPUS.find(x=>x.id===$(k+'-gpu').value);['mem','bw','fp8'].forEach(f=>$(k+'-'+f).value=g[f])};
+const fillM=k=>{const m=MODELS.find(x=>x.id===$(k+'-model').value);['tot','act','kv','cap','af'].forEach(f=>$(k+'-'+f).value=m[f]);$(k+'-prec').value=m.prec};
+const num=id=>{const v=parseFloat($(id).value);return isFinite(v)?v:0};
+function calc(k,as,wl){
+ const g=GPUS.find(x=>x.id===$(k+'-gpu').value),N=Math.max(1,Math.round(num(k+'-n'))),mm=MODELS.find(x=>x.id===$(k+'-model').value);
+ const mem=num(k+'-mem'),bw=num(k+'-bw'),fp=num(k+'-fp8'),tot=num(k+'-tot'),act=Math.min(num(k+'-act'),num(k+'-tot')),kv=num(k+'-kv'),cap=num(k+'-cap')||Infinity,af=num(k+'-af');
+ const pr=$(k+'-prec').value,bpp=PREC[pr][1],fl=fp*1e12*(pr==='bf16'?0.5:1);
+ const usable=N*mem*1e9*as.uf,W=tot*1e9*bpp,Wa=act*1e9*bpp,kvB=kv*(wl.kv==='fp8'?0.5:1);
+ const cMax=wl.p+wl.o,cAvg=wl.p+wl.o/2,kvU=cMax*kvB,fits=W<usable,maxU=fits&&kvU>0?Math.floor((usable-W)/kvU):0;
+ const BW=N*bw*1e12*as.bw,FL=N*fl*as.de,ov=(as.ov!==null?as.ov:(N===1?1.5:g.link==='nvlink'?3+0.25*N:3+1.5*(N-1)))/1000,att=Math.min(cAvg,cap),f=tot>0?act/tot:1;
+ const step=b=>{const wb=Wa+(W-Wa)*(1-(1-f)**b),tm=(wb+b*att*kvB)/BW,tc=(2*act*1e9+af*att)*b/FL,t=Math.max(tm,tc)+ov;
+  const se=1+(wl.s-1)*Math.max(0,1-tc/t),per=se/t,bound=tc>=tm&&tc>=ov?'compute':tm>=ov?'memory bandwidth':'per-step overhead';return{per,agg:per*b,bound}};
+ const P=wl.p,aS=P<=cap?P*P/2:cap*cap/2+(P-cap)*cap,ttft=(2*act*1e9*P+af*aS)/(N*fl*as.pe)+W/BW+ov;
+ const users=Math.min(wl.u,maxU),cur=users>0?step(users):null,one=maxU>0?step(1):null,top=maxU>0?step(maxU):null;
+ const sweep=[];if(maxU>0){for(let b=1;b<maxU;b*=2)sweep.push([b,step(b)]);sweep.push([maxU,top])}
+ return{name:`${N}× ${g.n}`,model:mm.n.split(' (')[0],fits,W,usable,maxU,users,cur,one,top,ttft,ctxOver:cMax>mm.ctx&&mm.id!=='custom',mctx:mm.ctx,sweep}}
+const fmt=(v,d=0)=>v==null||!isFinite(v)?'—':v>=1e4?Math.round(v).toLocaleString():v.toLocaleString(undefined,{maximumFractionDigits:d});
+const fT=s=>s==null||!isFinite(s)?'—':s<1?fmt(s*1000)+' ms':s<120?fmt(s,1)+' s':fmt(s/60,1)+' min';
+function status(r){const out=[];
+ if(!r.fits)out.push(`<p class="status bad"><b>✕</b>Weights (${fmt(r.W/1e9)} GB) don't fit in ${fmt(r.usable/1e9)} GB of usable memory.</p>`);
+ else{out.push(`<p class="status good"><b>✓</b>Fits: weights ${fmt(r.W/1e9)} GB of ${fmt(r.usable/1e9)} GB usable, room for ${fmt(r.maxU)} users at this context.</p>`);
+  if(r.users<wl().u)out.push(`<p class="status bad"><b>!</b>The KV cache only holds ${fmt(r.maxU)} users; the rest would queue.</p>`)}
+ if(r.ctxOver)out.push(`<p class="status bad"><b>!</b>Context exceeds this model's ${fmt(r.mctx)}-token window.</p>`);return out.join('')}
+const wl=()=>({p:Math.max(1,num('w-p')),o:Math.max(1,num('w-o')),u:Math.max(1,Math.round(num('w-u'))),kv:$('w-kv').value,s:parseFloat($('w-s').value)});
+const asm=()=>({uf:num('x-uf'),bw:num('x-bw'),de:num('x-de'),pe:num('x-pe'),ov:$('x-ov').value===''?null:num('x-ov')});
+let R={};
+function render(){const w=wl(),a=asm();R={a:calc('a',a,w),b:calc('b',a,w)};const A=R.a,B=R.b;
+ const ratio=(x,y)=>x&&y&&isFinite(x)&&isFinite(y)?fmt(y/x,1)+'×':'—';
+ const rows=[[`Per-user speed at ${fmt(w.u)} users (tok/s)`,A.cur?.per,B.cur?.per,true],[`Total throughput at ${fmt(w.u)} users (tok/s)`,A.cur?.agg,B.cur?.agg],[`Time for a ${fmt(w.o)}-token reply`,A.cur?w.o/A.cur.per:null,B.cur?w.o/B.cur.per:null,'t'],['Single-user speed (tok/s)',A.one?.per,B.one?.per],[`TTFT, ${fmt(w.p)}-token prompt (idle)`,A.fits?A.ttft:null,B.fits?B.ttft:null,'t'],['Max users at this context',A.maxU,B.maxU],['Throughput ceiling, KV cache full (tok/s)',A.top?.agg,B.top?.agg]];
+ $('read').innerHTML=`<h2>Readout</h2><table><thead><tr><th></th><th style="color:var(--a)">Rig A</th><th style="color:var(--b)">Rig B</th><th>B advantage</th></tr></thead><tbody>${rows.map(([l,x,y,t])=>`<tr><td>${l}</td><td${t===true?' class="big"':''}>${t==='t'?fT(x):fmt(x,x<100?1:0)}</td><td${t===true?' class="big"':''}>${t==='t'?fT(y):fmt(y,y<100?1:0)}</td><td>${t==='t'?ratio(y,x):ratio(x,y)}</td></tr>`).join('')}</tbody></table>
+ <p class="note" style="margin-top:10px"><b style="color:var(--a)">A</b> ${A.name} · ${A.model}${A.cur?' · limited by '+A.cur.bound:''}</p>${status(A)}
+ <p class="note"><b style="color:var(--b)">B</b> ${B.name} · ${B.model}${B.cur?' · limited by '+B.cur.bound:''}</p>${status(B)}`;
+ drawAll();table();save()}
+function chart(svgId,tipId,key,logY){const s=$(svgId),tip=$(tipId),W=s.clientWidth,H=s.clientHeight;if(!W)return;
+ const m={l:W<520?44:58,r:12,t:10,b:34},S=[['a',R.a.sweep],['b',R.b.sweep]].filter(x=>x[1].length),all=S.flatMap(x=>x[1]);
+ if(!all.length){s.innerHTML=`<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="var(--mut)">Neither rig fits this model</text>`;return}
+ const xs=all.map(p=>p[0]),ys=all.map(p=>p[1][key]),x0=1,x1=Math.max(2,...xs,wl().u),lx=v=>m.l+(Math.log(v)-Math.log(x0))/(Math.log(x1)-Math.log(x0))*(W-m.l-m.r);
+ let y0=logY?10**Math.floor(Math.log10(Math.min(...ys))):0,y1=logY?10**Math.ceil(Math.log10(Math.max(...ys))):Math.max(...ys)*1.05;if(!logY){const st=10**Math.floor(Math.log10(y1/4)),n=[1,2,2.5,5,10].find(k=>k*st*4>=y1)*st;y1=n*4}
+ const ly=v=>logY?H-m.b-(Math.log10(v)-Math.log10(y0))/(Math.log10(y1)-Math.log10(y0))*(H-m.t-m.b):H-m.b-(v-y0)/(y1-y0)*(H-m.t-m.b);
+ const yt=logY?Array.from({length:Math.round(Math.log10(y1/y0))+1},(_,i)=>y0*10**i):[0,1,2,3,4].map(i=>y1/4*i);
+ const xt=[];for(let v=1;v<=x1;v*=W<520?100:10)xt.push(v);
+ const lab=v=>v>=1e6?v/1e6+'M':v>=1e3?v/1e3+'k':fmt(v);
+ let h=yt.map(v=>`<line x1="${m.l}" x2="${W-m.r}" y1="${ly(v)}" y2="${ly(v)}" stroke="var(--line)"/><text x="${m.l-6}" y="${ly(v)+4}" text-anchor="end" font-size="12" fill="var(--mut)">${lab(Math.round(v))}</text>`).join('');
+ h+=xt.map(v=>`<text x="${lx(v)}" y="${H-m.b+18}" text-anchor="middle" font-size="12" fill="var(--mut)">${lab(v)}</text>`).join('')+`<text x="${W-m.r}" y="${H-2}" text-anchor="end" font-size="12" fill="var(--mut)">concurrent users (log)</text>`;
+ const ux=lx(Math.min(wl().u,x1));h+=`<line x1="${ux}" x2="${ux}" y1="${m.t}" y2="${H-m.b}" stroke="var(--ink)" stroke-dasharray="4 4" opacity=".5"/>`;
+ S.forEach(([k,p])=>{h+=`<polyline fill="none" stroke="var(--${k})" stroke-width="2" points="${p.map(q=>lx(q[0])+','+ly(q[1][key])).join(' ')}"/>`;const e=p[p.length-1];h+=`<circle cx="${lx(e[0])}" cy="${ly(e[1][key])}" r="4.5" fill="var(--${k})" stroke="var(--bg)" stroke-width="2"/>`});
+ h+=`<line id="${svgId}x" y1="${m.t}" y2="${H-m.b}" stroke="var(--mut)" visibility="hidden"/><rect x="${m.l}" y="0" width="${W-m.l-m.r}" height="${H}" fill="transparent" id="${svgId}h"/>`;s.innerHTML=h;
+ const hit=$(svgId+'h'),cx=$(svgId+'x');
+ hit.onmousemove=e=>{const r=s.getBoundingClientRect(),px=e.clientX-r.left,v=Math.exp(Math.log(x0)+(px-m.l)/(W-m.l-m.r)*(Math.log(x1)-Math.log(x0)));
+  const near=S.map(([k,p])=>[k,p.reduce((a,q)=>Math.abs(Math.log(q[0]/v))<Math.abs(Math.log(a[0]/v))?q:a)]);
+  cx.setAttribute('x1',px);cx.setAttribute('x2',px);cx.setAttribute('visibility','visible');
+  tip.innerHTML=near.map(([k,q])=>`<span style="color:var(--${k})">●</span> Rig ${k.toUpperCase()}: ${fmt(q[1][key],1)} tok/s at ${fmt(q[0])} users`).join('<br>');tip.style.display='block';
+  tip.style.left=Math.min(px+12,W-tip.offsetWidth)+'px';tip.style.top='8px'};
+ hit.onmouseleave=()=>{tip.style.display='none';cx.setAttribute('visibility','hidden')}}
+function drawAll(){chart('s1','t1','agg',true);chart('s2','t2','per',false)}
+function table(){const L=Math.max(R.a.sweep.length,R.b.sweep.length);let h='<table class="data"><thead><tr><th>Rig</th><th>Users</th><th>Per-user tok/s</th><th>Total tok/s</th><th>Limited by</th></tr></thead><tbody>';
+ ['a','b'].forEach(k=>R[k].sweep.forEach(([b,v])=>h+=`<tr><td>${k.toUpperCase()}</td><td>${fmt(b)}</td><td>${fmt(v.per,1)}</td><td>${fmt(v.agg)}</td><td>${v.bound}</td></tr>`));$('tbl').innerHTML=L?h+'</tbody></table>':'<p class="note">Nothing fits.</p>'}
+const IDS=()=>[...document.querySelectorAll('input,select')].map(e=>e.id).filter(Boolean);
+function save(){try{localStorage.setItem('llmcalc1',JSON.stringify(Object.fromEntries(IDS().map(i=>[i,$(i).value]))))}catch(e){}}
+['a','b'].forEach(k=>{fillG(k);fillM(k);$(k+'-gpu').addEventListener('change',()=>{fillG(k);render()});$(k+'-model').addEventListener('change',()=>{fillM(k);render()})});
+try{const s=JSON.parse(localStorage.getItem('llmcalc1')||'null');if(s)Object.entries(s).forEach(([i,v])=>{if($(i))$(i).value=v})}catch(e){}
+document.addEventListener('input',e=>{if(e.target.matches('input,select'))render()});
+const ro=new ResizeObserver(drawAll);ro.observe($('f1'));ro.observe($('f2'));
+render();
+}</script></body></html>
